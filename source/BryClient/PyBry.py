@@ -1,18 +1,8 @@
-import serial
-import time
+'''
+PyBry: Brymen DMM data connection client
 
-#Some constants
-PortName            = 'Com9'
-Nread               = 20
-WatchdogResetPeriod = 60 #seconds
-DebugOn             = False
 
-dataLog = []
-
-def AddSampleToHistory(sample):
-    dataLog.append(sample)
-
-'''Sample dictionary layout
+Sample data layout
 sample
     timestamp
     inbytes
@@ -23,6 +13,44 @@ sample
         measureUpper   
         measureLower
 '''
+
+#for Brymen connection
+import serial
+import time
+
+#for graphing
+import pyqtgraph as pg
+from pyqtgraph.Qt import QtCore, QtGui
+import numpy as np
+
+
+#Some constants
+PortName            = 'Com9'
+Nread               = 20
+WatchdogResetPeriod = 60 #seconds
+DebugOn             = False
+
+
+#globals
+logSamples = []
+logGraphData = np.empty(100)
+
+def AddSampleToHistory(sample):
+    global logSamples
+    global logGraphData
+
+    logSamples.append(sample)
+    
+    #grow graph data by 2x
+    size = len(logSamples)
+    if size >= logGraphData.shape[0]:
+        tmp = logGraphData
+        logGraphData = np.empty(2*logGraphData.shape[0])
+        logGraphData[:tmp.shape[0]] = tmp
+        
+    logGraphData[size-1] = sample["state"]["measureLower"]["value"]
+    #print(sample)
+
 
 #Segment data to character map (7 MSB only)
 segments ={
@@ -221,8 +249,8 @@ def Unpack(sample):
 
     lower = {}
     upper = {}
-    unpack["upper"] = lower
-    unpack["lower"] = upper
+    unpack["lower"] = lower
+    unpack["upper"] = upper
     
 
     def UnpackBit(dic, byte, bit, key):
@@ -324,16 +352,76 @@ def SampleLoop(ser):
             sample["state"]  = DecodeState(sample)
             PrintSample(sample)
             AddSampleToHistory(sample)
+            #UpdateGraph()
         
         #if time to reset watchdog, do it
         if time.time() > nextWatchdogReset:
             ser.write("Go".encode())
             nextWatchdogReset = time.time() + WatchdogResetPeriod
+        time.sleep(0.01)
+
+def UpdateGraph():
+    global curve
+    global pl
+    global logSamples
+    global logGraphData
     
-def main():
-    with serial.Serial('COM9') as ser:
-        print(ser)
-        SampleLoop(ser)
+    size = len(logSamples)
+
+    if size>0:
+        curve.setData(logGraphData[:size])
+        label = logSamples[size-1]["state"]["measureLower"]["source"]
+        unit =  logSamples[size-1]["state"]["measureLower"]["unit"]
+        pl.getAxis('left').setLabel(label, unit)
+
+
+def InitGraph():
+    global win
+    global curve
+    global pl
+
+    win = pg.GraphicsWindow()
+    win.setWindowTitle('PyBry')
+
+    pl = win.addPlot()
+    pl.setDownsampling(mode='peak')
+    pl.getAxis('left').setGrid(128)
+    pl.getAxis('left').enableAutoSIPrefix(True)
+    pl.getAxis('bottom').setGrid(128)
+    pl.setClipToView(True)
+    #p3.setRange(xRange=[-100, 0])
+    #p3.setLimits(xMax=0)
+    curve = pl.plot()
+    
+class SamplingThread(QtCore.QThread):
+    def __init__(self):
+        QtCore.QThread.__init__(self)
+
+    def __del__(self):
+        self.wait()
+
+    def run(self):
+        with serial.Serial(PortName) as ser:
+            print(ser)
+            SampleLoop(ser)
+
 
 if __name__ == "__main__":
-    main()
+    import sys
+    #app = QtGui.QApplication([])
+
+    #init graph
+    InitGraph()
+
+    #setup update timer
+    timer = QtCore.QTimer()
+    timer.timeout.connect(UpdateGraph)
+    timer.start(50)
+
+    #run the background sampling thread 
+    samplingThread = SamplingThread()
+    samplingThread.start()
+
+    #run the application
+    if (sys.flags.interactive != 1) or not hasattr(QtCore, 'PYQT_VERSION'):
+        QtGui.QApplication.instance().exec_()
