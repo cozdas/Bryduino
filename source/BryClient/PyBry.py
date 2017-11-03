@@ -6,12 +6,9 @@ Sample data layout
 sample
     timestamp
     inbytes
-    unpack
-        upper
-        lower
     state
-        measureUpper   
-        measureLower
+    measureUpper   
+    measureLower
 '''
 
 #for Brymen connection
@@ -48,7 +45,7 @@ def AddSampleToHistory(sample):
         logGraphData = np.empty(2*logGraphData.shape[0])
         logGraphData[:tmp.shape[0]] = tmp
         
-    logGraphData[size-1] = sample["state"]["measureLower"]["value"]
+    logGraphData[size-1] = sample["measureLower"]["value"]
     #print(sample)
 
 
@@ -81,22 +78,28 @@ segments ={
 def PrintMeasurement(meas):
     print("{:.6g} {} = {:.6f} {} ({}) ".format( meas["value"],  meas["unit"], meas["valueOrg"],  meas["unitOrg"],  meas["source"]), end="")
 
-def PrintSample(sample):
+def PrintSample(sample, unpackedData):
     inbytes = sample["inbytes"]
     
-    UnpackLower   = sample["unpack"]["lower"]
-    UnpackUpper   = sample["unpack"]["upper"]
+    UnpackLower   = unpackedData["lower"]
+    UnpackUpper   = unpackedData["upper"]
     hexs = ":".join("{:02x}".format(c) for c in inbytes)
     
+    #raw data
     if DebugOn:
         print("{} --> {} {}".format(hexs, ''.join(UnpackLower["Segs"]), ''.join(UnpackUpper["Segs"])))
-    PrintMeasurement(sample["state"]["measureUpper"])
+    
+    #upper measurement
+    PrintMeasurement(sample["measureUpper"])
     if DebugOn:
         print(GetLitItems(UnpackUpper))
-    PrintMeasurement(sample["state"]["measureLower"])
+    
+    #lower measurement
+    PrintMeasurement(sample["measureLower"])
     if DebugOn:
         print(GetLitItems(UnpackLower))
-        print(GetLitItems(sample["unpack"]))
+        #common state
+        print(GetLitItems(unpackedData))
  
     print("") #newline
 
@@ -214,8 +217,8 @@ def DecodeMeasurement(unpackedDisplay):
     return measure
        
 #using the unpacked bits, determines the current state including the measurements
-def DecodeState(sample):
-    lit = GetLitItems(sample["unpack"]) #get lit items in the common (non-value-specific) section
+def DecodeUnpackedData(unpackedData):
+    lit = GetLitItems(unpackedData) #get lit items in the common (non-value-specific) section
 
     state = {}
 
@@ -228,30 +231,24 @@ def DecodeState(sample):
     state["Avg"]= "Avg" in lit and ("Min" not in lit)
 
     #decode the upper and lower measurements
-    state["measureUpper"] = DecodeMeasurement(sample["unpack"]["upper"])
-    state["measureLower"] = DecodeMeasurement(sample["unpack"]["lower"])
+    measureUpper = DecodeMeasurement(unpackedData["upper"])
+    measureLower = DecodeMeasurement(unpackedData["lower"])
 
     #cross-display fixes
-    if state["measureUpper"]["text"]=="diod":
-        state["measureLower"]["source"] = "Diode" + state["measureLower"]["source"]
+    if measureUpper["text"]=="diod":
+        measureLower["source"] = "Diode" + measureLower["source"]
 
-    if "Temperature" in state["measureUpper"]["source"]:
-        state["measureUpper"]["unit"]    = state["measureLower"]["unit"]
-        state["measureUpper"]["unitOrg"] = state["measureLower"]["unitOrg"]
+    if "Temperature" in measureUpper["source"]:
+        measureUpper["unit"]    = measureLower["unit"]
+        measureUpper["unitOrg"] = measureLower["unitOrg"]
 
-    return state
+    return (state, measureUpper, measureLower)
     
 #unpacks the bits in the bytearray to named flags and digit character array
-def Unpack(sample):
-    inbytes = sample["inbytes"] 
-    
-    unpack = {}
-
-    lower = {}
-    upper = {}
-    unpack["lower"] = lower
-    unpack["upper"] = upper
-    
+def UnpackBytes(inbytes):
+    unpack = {"lower":{}, "upper":{}}
+    lower = unpack["lower"]
+    upper = unpack["upper"]
 
     def UnpackBit(dic, byte, bit, key):
         dic[key] = (inbytes[byte]&(1<<bit))!=0
@@ -354,13 +351,19 @@ def SampleLoop(ser):
     #Main loop: sample and reset watchdog
     while True:
         if ser.in_waiting >=Nread:
+            #read the raw bytes
             inbytes = ser.read(Nread)
             sample = {"inbytes":inbytes, "timestamp":time.time()}
-            sample["unpack"] = Unpack(sample)
-            sample["state"]  = DecodeState(sample)
-            PrintSample(sample)
+            
+            #unpack the bits and 7 segment data
+            unpackedData = UnpackBytes(inbytes)
+            
+            #decode the unpacked data to meaninful states and measurements with units
+            sample["state"], sample["measureUpper"], sample["measureLower"] = DecodeUnpackedData(unpackedData)
+            
+            #record and display
+            PrintSample(sample, unpackedData)
             AddSampleToHistory(sample)
-            #UpdateGraph()
         
         #if time to reset watchdog, do it
         if time.time() > nextWatchdogReset:
@@ -377,8 +380,8 @@ def UpdateGraph():
 
     if size>0:
         curve.setData(logGraphData[:size])
-        label = logSamples[size-1]["state"]["measureLower"]["source"]
-        unit =  logSamples[size-1]["state"]["measureLower"]["unit"]
+        label = logSamples[size-1]["measureLower"]["source"]
+        unit =  logSamples[size-1]["measureLower"]["unit"]
         pl.getAxis('left').setLabel(label, unit)
 
 
