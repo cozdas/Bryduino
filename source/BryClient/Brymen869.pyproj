@@ -26,6 +26,12 @@
   <ItemGroup>
     <InterpreterReference Include="{f089c216-65f9-407b-b892-4f4ffe9fe004}\3.5" />
   </ItemGroup>
+  <ItemGroup>
+    <Folder Include="misc files\" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="misc files\BryArduino.ino" />
+  </ItemGroup>
   <Import Project="$(PtvsTargetsFile)" Condition="Exists($(PtvsTargetsFile))" />
   <Import Project="$(MSBuildToolsPath)\Microsoft.Common.targets" Condition="!Exists($(PtvsTargetsFile))" />
 </Project>

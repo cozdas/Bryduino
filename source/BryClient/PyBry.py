@@ -7,6 +7,23 @@ Nread               = 20
 WatchdogResetPeriod = 60 #seconds
 DebugOn             = False
 
+dataLog = []
+
+def AddSampleToHistory(sample):
+    dataLog.append(sample)
+
+'''Sample dictionary layout
+sample
+    timestamp
+    inbytes
+    unpack
+        upper
+        lower
+    state
+        measureUpper   
+        measureLower
+'''
+
 #Segment data to character map (7 MSB only)
 segments ={
     0b10111110:"0",
@@ -33,8 +50,28 @@ segments ={
     }
 
 
-def PrintResult(res):
-    print("{:.6g} {} = {:.6f} {} ({}) ".format( res["value"],  res["unit"], res["valueOrg"],  res["unitOrg"],  res["source"]), end="")
+def PrintMeasurement(meas):
+    print("{:.6g} {} = {:.6f} {} ({}) ".format( meas["value"],  meas["unit"], meas["valueOrg"],  meas["unitOrg"],  meas["source"]), end="")
+
+def PrintSample(sample):
+    inbytes = sample["inbytes"]
+    
+    UnpackLower   = sample["unpack"]["lower"]
+    UnpackUpper   = sample["unpack"]["upper"]
+    hexs = ":".join("{:02x}".format(c) for c in inbytes)
+    
+    if DebugOn:
+        print("{} --> {} {}".format(hexs, ''.join(UnpackLower["Segs"]), ''.join(UnpackUpper["Segs"])))
+    PrintMeasurement(sample["state"]["measureUpper"])
+    if DebugOn:
+        print(GetLitItems(UnpackUpper))
+    PrintMeasurement(sample["state"]["measureLower"])
+    if DebugOn:
+        print(GetLitItems(UnpackLower))
+        print(GetLitItems(sample["unpack"]))
+ 
+    print("") #newline
+
 
 def GetLitItems(pack):
     litItems = [key for key, val in pack.items() if val==True] 
@@ -46,17 +83,18 @@ def DecodeDigit(char):
         return segments[digit]
     return '?'
 
-def DecodeValue(pack):
-    res = {}
+#decodes the number, unit and source using the unpacked display info
+def DecodeMeasurement(unpackedDisplay):
+    measure = {}
 
-    if "Segs" not in pack:
+    if "Segs" not in unpackedDisplay:
         return None
 
-    lit = GetLitItems(pack)
+    lit = GetLitItems(unpackedDisplay)
 
     unit = ""
     #convert to string
-    s = ''.join(pack["Segs"])
+    s = ''.join(unpackedDisplay["Segs"])
 
     #insert decimal point    
     dotPos = None
@@ -67,7 +105,7 @@ def DecodeValue(pack):
     if dotPos!=None:
         s = s[:dotPos] + '.' + s[dotPos:]
 
-    res["text"] = s
+    measure["text"] = s
 
     #determine Unit
     if   "A"   in lit: unit = "A"
@@ -139,108 +177,125 @@ def DecodeValue(pack):
         valDerived=mult*valf
 
     #pack the result
-    res["value"] = valDerived
-    res["unit"] = unit
-    res["valueOrg"] = valf
-    res["unitOrg"] = unitOrg
-    res["source"] = source
+    measure["value"] = valDerived
+    measure["unit"] = unit
+    measure["valueOrg"] = valf
+    measure["unitOrg"] = unitOrg
+    measure["source"] = source
     
-    return res
+    return measure
        
-def DecodeCommon(pack):
-    res = {}
-    lit = GetLitItems(pack)
-    res["Holding"] = "Hold" in lit
-    res["Relative"]= "Delta" in lit
-    res["Recording"]= "Record" in lit
-    res["Crest"]= "Crest" in lit
-    res["Min"]= "Min" in lit and ("Max" not in lit)
-    res["Max"]= "Max" in lit and ("Min" not in lit)
-    res["Avg"]= "Avg" in lit and ("Min" not in lit)
+#using the unpacked bits, determines the current state
+def DecodeState(sample):
+    lit = GetLitItems(sample["unpack"]) #get lit items in the common (non-value-specific) section
 
-    return res
-    
-    
-    
-def Decode(inbytes):
-    pack = {}
-    pack["upper"] = {}
-    pack["lower"] = {}
+    state = {}
 
-    def DecodeBit(dic, byte, bit, key):
+    state["Holding"] = "Hold" in lit
+    state["Relative"]= "Delta" in lit
+    state["Recording"]= "Record" in lit
+    state["Crest"]= "Crest" in lit
+    state["Min"]= "Min" in lit and ("Max" not in lit)
+    state["Max"]= "Max" in lit and ("Min" not in lit)
+    state["Avg"]= "Avg" in lit and ("Min" not in lit)
+
+    #decode the upper and lower measurements
+    state["measureUpper"] = DecodeMeasurement(sample["unpack"]["upper"])
+    state["measureLower"] = DecodeMeasurement(sample["unpack"]["lower"])
+
+    #cross-display fixes
+    if state["measureUpper"]["text"]=="diod":
+        state["measureLower"]["source"] = "Diode" + state["measureLower"]["source"]
+
+    if "Temperature" in state["measureUpper"]["source"]:
+        state["measureUpper"]["unit"]    = state["measureLower"]["unit"]
+        state["measureUpper"]["unitOrg"] = state["measureLower"]["unitOrg"]
+
+    return state
+    
+#unpacks the bits in the bytearray to named flags and digit character array
+def Unpack(sample):
+    inbytes = sample["inbytes"] 
+    
+    unpack = {}
+
+    lower = {}
+    upper = {}
+    unpack["upper"] = lower
+    unpack["lower"] = upper
+    
+
+    def UnpackBit(dic, byte, bit, key):
         dic[key] = (inbytes[byte]&(1<<bit))!=0
 
-    lower = pack["lower"]
-    upper = pack["upper"]
-
     #Byte0
-    DecodeBit(pack,  0, 0, "Auto")
-    DecodeBit(pack,  0, 1, "Record")
-    DecodeBit(pack,  0, 2, "Crest")
-    DecodeBit(pack,  0, 3, "Hold")
-    DecodeBit(lower, 0, 4, "DC")
-    DecodeBit(pack,  0, 5, "Max")
-    DecodeBit(pack,  0, 6, "Min")
-    DecodeBit(pack,  0, 7, "Avg")
+    UnpackBit(unpack, 0, 0, "Auto")
+    UnpackBit(unpack, 0, 1, "Record")
+    UnpackBit(unpack, 0, 2, "Crest")
+    UnpackBit(unpack, 0, 3, "Hold")
+    UnpackBit(lower,  0, 4, "DC")
+    UnpackBit(unpack, 0, 5, "Max")
+    UnpackBit(unpack, 0, 6, "Min")
+    UnpackBit(unpack, 0, 7, "Avg")
 
     #Byte1
-    DecodeBit(lower, 1, 0, "AC")
-    DecodeBit(lower, 1, 1, "T1")
-    DecodeBit(lower, 1, 2, "TempDiff")
-    DecodeBit(lower, 1, 3, "T2")
-    DecodeBit(pack,  1, 4, "BarScale")
-    DecodeBit(pack,  1, 5, "BarNeg")
-    DecodeBit(lower, 1, 6, "VFD")
-    DecodeBit(lower, 1, 7, "Neg")
+    UnpackBit(lower,  1, 0, "AC")
+    UnpackBit(lower,  1, 1, "T1")
+    UnpackBit(lower,  1, 2, "TempDiff")
+    UnpackBit(lower,  1, 3, "T2")
+    UnpackBit(unpack, 1, 4, "BarScale")
+    UnpackBit(unpack, 1, 5, "BarNeg")
+    UnpackBit(lower,  1, 6, "VFD")
+    UnpackBit(lower,  1, 7, "Neg")
 
     #Byte2
-    DecodeBit(lower, 2, 0, "Delta")
+    UnpackBit(lower,  2, 0, "Delta")
 
     #Byte7
-    DecodeBit(lower, 7, 0, "V")
+    UnpackBit(lower,  7, 0, "V")
 
     #Byte8
-    DecodeBit(upper, 8, 0, "µ")
-    DecodeBit(upper, 8, 1, "m")
-    DecodeBit(upper, 8, 2, "A")
-    DecodeBit(upper, 8, 3, "system")
-    DecodeBit(upper, 8, 4, "Neg")
-    DecodeBit(upper, 8, 5, "AC")
-    DecodeBit(upper, 8, 6, "T2")
-    DecodeBit(pack,  8, 7, "Batt")
+    UnpackBit(upper,  8, 0, "µ")
+    UnpackBit(upper,  8, 1, "m")
+    UnpackBit(upper,  8, 2, "A")
+    UnpackBit(upper,  8, 3, "system")
+    UnpackBit(upper,  8, 4, "Neg")
+    UnpackBit(upper,  8, 5, "AC")
+    UnpackBit(upper,  8, 6, "T2")
+    UnpackBit(unpack, 8, 7, "Batt")
 
     #Byte9
-    DecodeBit(pack,  9, 0, "Cont")
+    UnpackBit(unpack,  9, 0, "Cont")
 
     #Byte13
-    DecodeBit(upper, 13, 0, "M")
-    DecodeBit(upper, 13, 1, "k")
-    DecodeBit(upper, 13, 2, "Hz")
-    DecodeBit(upper, 13, 3, "V")
-    DecodeBit(lower, 13, 4, "S")
-    DecodeBit(lower, 13, 5, "F")
-    DecodeBit(lower, 13, 6, "n")
-    DecodeBit(lower, 13, 7, "A")
+    UnpackBit(upper, 13, 0, "M")
+    UnpackBit(upper, 13, 1, "k")
+    UnpackBit(upper, 13, 2, "Hz")
+    UnpackBit(upper, 13, 3, "V")
+    UnpackBit(lower, 13, 4, "S")
+    UnpackBit(lower, 13, 5, "F")
+    UnpackBit(lower, 13, 6, "n")
+    UnpackBit(lower, 13, 7, "A")
 
     #Byte14
-    DecodeBit(lower, 14, 0, "Hz")
-    DecodeBit(lower, 14, 1, "dB")
-    DecodeBit(lower, 14, 2, "m")
-    DecodeBit(lower, 14, 3, "µ")
-    DecodeBit(lower, 14, 4, "Ohm")
-    DecodeBit(lower, 14, 5, "M")
-    DecodeBit(lower, 14, 6, "k")
-    DecodeBit(lower, 14, 7, "Duty")
+    UnpackBit(lower, 14, 0, "Hz")
+    UnpackBit(lower, 14, 1, "dB")
+    UnpackBit(lower, 14, 2, "m")
+    UnpackBit(lower, 14, 3, "µ")
+    UnpackBit(lower, 14, 4, "Ohm")
+    UnpackBit(lower, 14, 5, "M")
+    UnpackBit(lower, 14, 6, "k")
+    UnpackBit(lower, 14, 7, "Duty")
 
     #Decimal Points
-    DecodeBit(lower, 3, 0, "Dec1")
-    DecodeBit(lower, 4, 0, "Dec2")
-    DecodeBit(lower, 5, 0, "Dec3")
-    DecodeBit(lower, 6, 0, "Dec4")
+    UnpackBit(lower, 3, 0, "Dec1")
+    UnpackBit(lower, 4, 0, "Dec2")
+    UnpackBit(lower, 5, 0, "Dec3")
+    UnpackBit(lower, 6, 0, "Dec4")
     
-    DecodeBit(upper, 10, 0, "Dec1")
-    DecodeBit(upper, 11, 0, "Dec2")
-    DecodeBit(upper, 12, 0, "Dec3")
+    UnpackBit(upper, 10, 0, "Dec1")
+    UnpackBit(upper, 11, 0, "Dec2")
+    UnpackBit(upper, 12, 0, "Dec3")
 
     #upper segs
     upper["Segs"]=[]
@@ -252,33 +307,7 @@ def Decode(inbytes):
     for digit in range(0, 6):
         lower["Segs"].append(DecodeDigit(inbytes[2+digit]))
 
-    #decode upper and lower displays
-    result = DecodeCommon(pack)
-    result["upper"] = DecodeValue(upper)
-    result["lower"] = DecodeValue(lower)
-    
-    #cross-display fixes
-    if result["upper"]["text"]=="diod":
-        result["lower"]["source"] = "Diode" + result["lower"]["source"]
-
-    if "Temperature" in result["upper"]["source"]:
-        result["upper"]["unit"] = result["lower"]["unit"]
-        result["upper"]["unitOrg"] = result["lower"]["unitOrg"]
-
-    hexs = ":".join("{:02x}".format(c) for c in inbytes)
-    
-    if DebugOn:
-        print("{} --> {} {}".format(hexs, ''.join(lower["Segs"]), ''.join(upper["Segs"])))
-    PrintResult(result["upper"])
-    if DebugOn:
-        print(GetLitItems(upper))
-    PrintResult(result["lower"])
-    if DebugOn:
-        print(GetLitItems(lower))
-        print(GetLitItems(pack))
- 
-
-    print("") #newline
+    return unpack
     
 def SampleLoop(ser):
     #flush the input buffer
@@ -290,7 +319,11 @@ def SampleLoop(ser):
     while True:
         if ser.in_waiting >=Nread:
             inbytes = ser.read(Nread)
-            Decode(inbytes)
+            sample = {"inbytes":inbytes, "timestamp":time.time()}
+            sample["unpack"] = Unpack(sample)
+            sample["state"]  = DecodeState(sample)
+            PrintSample(sample)
+            AddSampleToHistory(sample)
         
         #if time to reset watchdog, do it
         if time.time() > nextWatchdogReset:
