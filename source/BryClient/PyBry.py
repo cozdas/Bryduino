@@ -28,7 +28,7 @@ import numpy as np
 PortName            = 'Com9'
 Nread               = 20
 WatchdogResetPeriod = 60 #seconds
-DebugOn             = False
+DebugOn             = True
 
 
 #globals
@@ -213,7 +213,7 @@ def DecodeMeasurement(unpackedDisplay):
     
     return measure
        
-#using the unpacked bits, determines the current state
+#using the unpacked bits, determines the current state including the measurements
 def DecodeState(sample):
     lit = GetLitItems(sample["unpack"]) #get lit items in the common (non-value-specific) section
 
@@ -336,12 +336,20 @@ def Unpack(sample):
         lower["Segs"].append(DecodeDigit(inbytes[2+digit]))
 
     return unpack
+
+def ResetWatchdog(ser):
+    ser.write("Go".encode())
+    nextWatchdogReset = time.time() + WatchdogResetPeriod
+    if DebugOn:    
+        print("*********Watchdog Reset**********")
+    return nextWatchdogReset
+
     
 def SampleLoop(ser):
     #flush the input buffer
     ser.reset_input_buffer()
 
-    nextWatchdogReset = time.time() + WatchdogResetPeriod
+    nextWatchdogReset = ResetWatchdog(ser)
 
     #Main loop: sample and reset watchdog
     while True:
@@ -356,8 +364,7 @@ def SampleLoop(ser):
         
         #if time to reset watchdog, do it
         if time.time() > nextWatchdogReset:
-            ser.write("Go".encode())
-            nextWatchdogReset = time.time() + WatchdogResetPeriod
+            nextWatchdogReset = ResetWatchdog(ser)
         time.sleep(0.01)
 
 def UpdateGraph():

@@ -7,7 +7,7 @@
 const int PIN =2;
 const int POUT=3;
 
-const unsigned long timeoutInit     = 2100L;        //ms (capacitance measurement may take ~2 seconds)
+const unsigned long timeoutInit     = 600L;         //ms (capacitance measurement may take ~2 seconds)
 const unsigned long timeoutWatchdog = 5L*60L*1000L; //ms (listeners need to reset the watchdog to prevent battery drain if no one is listening)
 const int           numBytesToRead  = 20;
 const int           clockPeriod     = 200;          //us (you may need to adjust this depending on the signal quality)
@@ -37,9 +37,9 @@ void setup()
 //sends 10ms low pulse
 void SendRequestPulse()
 {
-  digitalWrite(POUT, LOW);
-  delay(10);
   digitalWrite(POUT, HIGH);
+  delay(10);
+  digitalWrite(POUT, LOW);
 }
 
 boolean InitSequence()
@@ -57,8 +57,11 @@ boolean InitSequence()
   {
     if(millis()>deadline)
     {
-      SendRequestPulse();
       deadline = millis()+ timeoutInit;
+
+      //double check before sending a new init pulse as it can be taken as a clock
+      if(digitalRead(PIN)==HIGH) 
+        SendRequestPulse();
     }
   }
 
@@ -75,7 +78,7 @@ boolean ReadBytes()
     for(int j=0; j<8; ++j)
     {
       //setup edge
-      digitalWrite(POUT, LOW);
+      digitalWrite(POUT, HIGH);
       delayMicroseconds(clockPeriod>>1);
 
       //read
@@ -83,7 +86,7 @@ boolean ReadBytes()
         bVal |= 1<<j;
 
       //sample edge
-      digitalWrite(POUT, HIGH);
+      digitalWrite(POUT, LOW);
       delayMicroseconds(clockPeriod>>1);
     }
     outBuffer[i]=bVal;
