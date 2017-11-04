@@ -14,11 +14,14 @@ sample
 #for Brymen connection
 import serial
 import time
+import threading
+import numpy as np
+
 
 #for graphing
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtGui
-import numpy as np
+from pyqtgraph.dockarea import *
 
 
 #Some constants
@@ -26,35 +29,46 @@ PortName            = 'Com9'
 Nread               = 20
 WatchdogResetPeriod = 60 #seconds
 DebugOn             = True
+DockingOn           = True
+LinkAxes            = False
+XAxisTime           = False
 
 
 #globals
 logSamples = []
-logGraphDataU = np.empty(100)
-logGraphDataL = np.empty(100)
+logGraphData = np.empty((3,100))
+dataLock = threading.Lock()
 
 def AddSampleToHistory(sample):
     global logSamples
-    global logGraphDataU
-    global logGraphDataL
+    global logGraphData
 
-    logSamples.append(sample)
+    with dataLock:
+        logSamples.append(sample)
     
-    #grow graph data by 2x
-    size = len(logSamples)
-    if size >= logGraphDataU.shape[0]:
-        tmp = logGraphDataU
-        logGraphDataU = np.empty(2*logGraphDataU.shape[0])
-        logGraphDataU[:tmp.shape[0]] = tmp
-        
-    if size >= logGraphDataL.shape[0]:
-        tmp = logGraphDataL
-        logGraphDataL = np.empty(2*logGraphDataL.shape[0])
-        logGraphDataL[:tmp.shape[0]] = tmp
-        
-    logGraphDataL[size-1] = sample["measureLower"]["value"]
-    logGraphDataU[size-1] = sample["measureUpper"]["value"]
-    #print(sample)
+        #grow graph data by 2x
+        sampleSize = len(logSamples)
+        graphSize = logGraphData.shape[1]
+        if sampleSize >= graphSize:
+            newData = np.empty((3,2*graphSize))
+            newData[:,:graphSize] = logGraphData
+            logGraphData = newData
+    
+        logGraphData[0,sampleSize-1] = sample["timestamp"]    
+        logGraphData[1,sampleSize-1] = sample["measureLower"]["value"]
+        logGraphData[2,sampleSize-1] = sample["measureUpper"]["value"]
+        #print(sample)
+
+def clearSampleHistory():
+    global logSamples
+    global logGraphData
+
+    with dataLock:
+        logSamples = []
+
+def ToggleXAxis():
+    global XAxisTime
+    XAxisTime = not XAxisTime
 
 
 #Segment data to character map (7 MSB only)
@@ -144,7 +158,6 @@ def DecodeMeasurement(unpackedDisplay):
     if dotPos!=None:
         s = s[:dotPos] + '.' + s[dotPos:]
 
-    measure["text"] = s
 
     #determine Unit
     if   "A"   in lit: unit = "A"
@@ -160,6 +173,10 @@ def DecodeMeasurement(unpackedDisplay):
     if s[-1:] in ["F", "C"]: 
         unit = "°" + s[-1:]
         s = s[:-1]
+    
+    #add negative
+    if "Neg" in lit:
+        s = "-" + s
 
     unitOrg = unit
 
@@ -185,8 +202,8 @@ def DecodeMeasurement(unpackedDisplay):
     #convert to float
     try:
         valf = float(s)
-        if "Neg" in lit: 
-            valf = -valf
+        #if "Neg" in lit: 
+        #    valf = -valf
     except ValueError:
         valf = float('nan')
 
@@ -216,6 +233,7 @@ def DecodeMeasurement(unpackedDisplay):
         valDerived=mult*valf
 
     #pack the result
+    measure["text"] = s
     measure["value"] = valDerived
     measure["unit"] = unit
     measure["valueOrg"] = valf
@@ -349,6 +367,19 @@ def ResetWatchdog(ser):
         print("*********Watchdog Reset**********")
     return nextWatchdogReset
 
+
+def UpdateValueLabels():
+    global labelUp
+    global labelMain
+
+    if len(logSamples)>0:
+        with dataLock:
+            sample = logSamples[-1]
+            labelUp.setText(sample["measureUpper"]["text"] + sample["measureUpper"]["unitOrg"])
+            labelMain.setText(sample["measureLower"]["text"] + sample["measureLower"]["unitOrg"])
+
+        labelUp.repaint()
+        labelMain.repaint()
     
 def SampleLoop(ser):
     #flush the input buffer
@@ -384,24 +415,36 @@ def UpdateGraph():
     global curveL
     global plL
     global logSamples
-    global logGraphDataU
-    global logGraphDataL
+    global logGraphData
     
     size = len(logSamples)
 
     if size>0:
+        with dataLock:
+            curveL.setData(x=logGraphData[0, :size] if XAxisTime else None, y=logGraphData[1, :size])
+            label = logSamples[size-1]["measureLower"]["source"]
+            unit =  logSamples[size-1]["measureLower"]["unit"]
+            plL.getAxis('left').setLabel(label, unit)
+            plL.setTitle(label)
 
-        curveL.setData(logGraphDataL[:size])
-        label = logSamples[size-1]["measureLower"]["source"]
-        unit =  logSamples[size-1]["measureLower"]["unit"]
-        plL.getAxis('left').setLabel(label, unit)
-        plL.setTitle(label)
+            curveU.setData(x=logGraphData[0, :size] if XAxisTime else None, y=logGraphData[2, :size])
+            label = logSamples[size-1]["measureUpper"]["source"]
+            unit =  logSamples[size-1]["measureUpper"]["unit"]
+            plU.getAxis('left').setLabel(label, unit)
+            plU.setTitle(label)
 
-        curveU.setData(logGraphDataU[:size])
-        label = logSamples[size-1]["measureUpper"]["source"]
-        unit =  logSamples[size-1]["measureUpper"]["unit"]
-        plU.getAxis('left').setLabel(label, unit)
-        plU.setTitle(label)
+
+##TODO: may want to move this to data recording to eliminate recomputation on data update if this turns out to be slow
+class TimeAxisItem(pg.AxisItem):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def tickStrings(self, values, scale, spacing):
+        #print("*")
+        if XAxisTime:
+            return [time.strftime("%H:%M:%S", time.localtime(value)) for value in values]
+        return super().tickStrings(values, scale, spacing)
+        
 
 
 
@@ -411,11 +454,78 @@ def InitGraph():
     global plU
     global curveL
     global plL
+    global app
+    global labelUp
+    global labelMain
 
-    win = pg.GraphicsWindow()
+    #create the window
+    #win = pg.GraphicsWindow()
+    if DockingOn:
+        app = QtGui.QApplication([])
+        win = QtGui.QMainWindow()
+    else:
+         win = pg.GraphicsWindow()
     win.setWindowTitle('PyBry')
 
-    plU = win.addPlot()
+    if DockingOn:   
+        #create the docking area
+        area = DockArea()
+        win.setCentralWidget(area)
+        win.resize(1000,500)
+
+        #create docks
+        dDis = Dock("Display", size=(100,100))
+        dSet = Dock("Settings", size=(50,1))
+        dGr1 = Dock("Upper Display", size=(900,250))
+        dGr2 = Dock("Main Display", size=(900,250))
+
+        #place the docks in the area
+        area.addDock(dDis, 'left')
+        area.addDock(dSet, 'bottom', dDis)
+        area.addDock(dGr1, 'right')
+        area.addDock(dGr2, 'bottom', dGr1) #share the bottom edge of d1
+
+        #Display Widget
+        font1=QtGui.QFont("SansSerif", 16, QtGui.QFont.Bold)     
+        font2=QtGui.QFont("SansSerif", 20, QtGui.QFont.Bold)     
+        labelUp   = QtGui.QLabel("0.000V")
+        labelMain = QtGui.QLabel("0.00000V")
+        labelUp.setFont(font1)
+        labelMain.setFont(font2)
+        wL1 = pg.LayoutWidget()
+        wL1.addWidget(labelUp, row=0, col=0)
+        wL1.addWidget(labelMain, row=1, col=0)
+        dDis.addWidget(wL1)
+        
+
+        #setting widgets
+        wL2 = pg.LayoutWidget()
+        clearBt = QtGui.QPushButton('Clear History')
+        saveBt  = QtGui.QPushButton('Save to CSV')
+        xAxisBt = QtGui.QPushButton('Toggle X Axis')
+        saveBt.setEnabled(False)
+        wL2.addWidget(clearBt, row=0, col=0)
+        wL2.addWidget(saveBt,row=1, col=0)
+        wL2.addWidget(xAxisBt,row=3, col=0)
+        clearBt.clicked.connect(clearSampleHistory)
+        xAxisBt.clicked.connect(ToggleXAxis)
+        dSet.addWidget(wL2)
+
+    #graph widgets
+    if DockingOn:
+        wgU = pg.PlotWidget(axisItems={'bottom': TimeAxisItem(orientation='bottom')})
+        wgL = pg.PlotWidget(axisItems={'bottom': TimeAxisItem(orientation='bottom')})
+        #wgU = pg.PlotWidget()
+        #wgL = pg.PlotWidget()
+
+        plU = wgU.getPlotItem()
+        plL = wgL.getPlotItem()
+    else:
+        plU = win.addPlot()
+        win.nextRow()
+        plL = win.addPlot()
+        
+
     plU.setDownsampling(mode='mean')
     plU.getAxis('left').setGrid(128)
     plU.getAxis('left').enableAutoSIPrefix(True)
@@ -423,9 +533,6 @@ def InitGraph():
     plU.setClipToView(True)
     curveU = plU.plot()
 
-    win.nextRow()
-
-    plL = win.addPlot()
     plL.setDownsampling(mode='mean')
     plL.getAxis('left').setGrid(128)
     plL.getAxis('left').enableAutoSIPrefix(True)
@@ -433,10 +540,16 @@ def InitGraph():
     plL.setClipToView(True)
     curveL = plL.plot()
 
-    plL.setXLink(plU)
-    plU.setXLink(plL)
+    #link the x axis
+    if LinkAxes:
+        plL.setXLink(plU)
+        plU.setXLink(plL)
 
-
+    if DockingOn:
+        #place graph widgets in the docks
+        dGr1.addWidget(wgU)
+        dGr2.addWidget(wgL)
+        win.show()
     
 class SamplingThread(QtCore.QThread):
     def __init__(self):
@@ -450,17 +563,20 @@ class SamplingThread(QtCore.QThread):
             print(ser)
             SampleLoop(ser)
 
+def Update():
+    UpdateValueLabels()
+    UpdateGraph()
+
 
 if __name__ == "__main__":
     import sys
-    #app = QtGui.QApplication([])
 
     #init graph
     InitGraph()
 
     #setup update timer
     timer = QtCore.QTimer()
-    timer.timeout.connect(UpdateGraph)
+    timer.timeout.connect(Update)
     timer.start(50)
 
     #run the background sampling thread 
