@@ -1,6 +1,7 @@
-'''
-PyBry: Brymen DMM data connection client
-
+''' 
+====================================================
+PyBry: Brymen DMM data connection client v0.01
+====================================================
 
 Sample data layout
 sample
@@ -29,7 +30,6 @@ PortName            = 'Com9'
 Nread               = 20
 WatchdogResetPeriod = 60 #seconds
 DebugOn             = True
-DockingOn           = True
 LinkAxes            = False
 XAxisTime           = False
 
@@ -460,70 +460,61 @@ def InitGraph():
 
     #create the window
     #win = pg.GraphicsWindow()
-    if DockingOn:
-        app = QtGui.QApplication([])
-        win = QtGui.QMainWindow()
-    else:
-         win = pg.GraphicsWindow()
+    app = QtGui.QApplication([])
+    win = QtGui.QMainWindow()
     win.setWindowTitle('PyBry')
 
-    if DockingOn:   
-        #create the docking area
-        area = DockArea()
-        win.setCentralWidget(area)
-        win.resize(1000,500)
+    #create the docking area
+    area = DockArea()
+    win.setCentralWidget(area)
+    win.resize(1000,500)
 
-        #create docks
-        dDis = Dock("Display", size=(100,100))
-        dSet = Dock("Settings", size=(50,1))
-        dGr1 = Dock("Upper Display", size=(900,250))
-        dGr2 = Dock("Main Display", size=(900,250))
+    #create docks
+    dDis = Dock("Display", size=(100,100))
+    dSet = Dock("Settings", size=(50,1))
+    dGr1 = Dock("Upper Display", size=(900,250))
+    dGr2 = Dock("Main Display", size=(900,250))
 
-        #place the docks in the area
-        area.addDock(dDis, 'left')
-        area.addDock(dSet, 'bottom', dDis)
-        area.addDock(dGr1, 'right')
-        area.addDock(dGr2, 'bottom', dGr1) #share the bottom edge of d1
+    #place the docks in the area
+    area.addDock(dDis, 'left')
+    area.addDock(dSet, 'bottom', dDis)
+    area.addDock(dGr1, 'right')
+    area.addDock(dGr2, 'bottom', dGr1) #share the bottom edge of d1
 
-        #Display Widget
-        font1=QtGui.QFont("SansSerif", 16, QtGui.QFont.Bold)     
-        font2=QtGui.QFont("SansSerif", 20, QtGui.QFont.Bold)     
-        labelUp   = QtGui.QLabel("0.000V")
-        labelMain = QtGui.QLabel("0.00000V")
-        labelUp.setFont(font1)
-        labelMain.setFont(font2)
-        wL1 = pg.LayoutWidget()
-        wL1.addWidget(labelUp, row=0, col=0)
-        wL1.addWidget(labelMain, row=1, col=0)
-        dDis.addWidget(wL1)
+    #Display Widget
+    font1=QtGui.QFont("SansSerif", 16, QtGui.QFont.Bold)     
+    font2=QtGui.QFont("SansSerif", 20, QtGui.QFont.Bold)     
+    labelUp   = QtGui.QLabel("0.000V")
+    labelMain = QtGui.QLabel("0.00000V")
+    labelUp.setFont(font1)
+    labelMain.setFont(font2)
+    wL1 = pg.LayoutWidget()
+    wL1.addWidget(labelUp, row=0, col=0)
+    wL1.addWidget(labelMain, row=1, col=0)
+    dDis.addWidget(wL1)
         
 
-        #setting widgets
-        wL2 = pg.LayoutWidget()
-        clearBt = QtGui.QPushButton('Clear History')
-        saveBt  = QtGui.QPushButton('Save to CSV')
-        xAxisBt = QtGui.QPushButton('Toggle X Axis')
-        saveBt.setEnabled(False)
-        wL2.addWidget(clearBt, row=0, col=0)
-        wL2.addWidget(saveBt,row=1, col=0)
-        wL2.addWidget(xAxisBt,row=3, col=0)
-        clearBt.clicked.connect(clearSampleHistory)
-        xAxisBt.clicked.connect(ToggleXAxis)
-        dSet.addWidget(wL2)
+    #setting widgets
+    wL2 = pg.LayoutWidget()
+    clearBt = QtGui.QPushButton('Clear History')
+    saveBt  = QtGui.QPushButton('Save to CSV')
+    xAxisBt = QtGui.QPushButton('Toggle X Axis')
+    saveBt.setEnabled(False)
+    wL2.addWidget(clearBt, row=0, col=0)
+    wL2.addWidget(saveBt,row=1, col=0)
+    wL2.addWidget(xAxisBt,row=3, col=0)
+    clearBt.clicked.connect(clearSampleHistory)
+    xAxisBt.clicked.connect(ToggleXAxis)
+    dSet.addWidget(wL2)
 
     #graph widgets
-    if DockingOn:
-        wgU = pg.PlotWidget(axisItems={'bottom': TimeAxisItem(orientation='bottom')})
-        wgL = pg.PlotWidget(axisItems={'bottom': TimeAxisItem(orientation='bottom')})
-        #wgU = pg.PlotWidget()
-        #wgL = pg.PlotWidget()
+    wgU = pg.PlotWidget(axisItems={'bottom': TimeAxisItem(orientation='bottom')})
+    wgL = pg.PlotWidget(axisItems={'bottom': TimeAxisItem(orientation='bottom')})
+    #wgU = pg.PlotWidget()
+    #wgL = pg.PlotWidget()
 
-        plU = wgU.getPlotItem()
-        plL = wgL.getPlotItem()
-    else:
-        plU = win.addPlot()
-        win.nextRow()
-        plL = win.addPlot()
+    plU = wgU.getPlotItem()
+    plL = wgL.getPlotItem()
         
 
     plU.setDownsampling(mode='mean')
@@ -545,11 +536,10 @@ def InitGraph():
         plL.setXLink(plU)
         plU.setXLink(plL)
 
-    if DockingOn:
-        #place graph widgets in the docks
-        dGr1.addWidget(wgU)
-        dGr2.addWidget(wgL)
-        win.show()
+    #place graph widgets in the docks
+    dGr1.addWidget(wgU)
+    dGr2.addWidget(wgL)
+    win.show()
     
 class SamplingThread(QtCore.QThread):
     def __init__(self):
