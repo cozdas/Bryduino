@@ -30,22 +30,30 @@ DebugOn             = True
 
 #globals
 logSamples = []
-logGraphData = np.empty(100)
+logGraphDataU = np.empty(100)
+logGraphDataL = np.empty(100)
 
 def AddSampleToHistory(sample):
     global logSamples
-    global logGraphData
+    global logGraphDataU
+    global logGraphDataL
 
     logSamples.append(sample)
     
     #grow graph data by 2x
     size = len(logSamples)
-    if size >= logGraphData.shape[0]:
-        tmp = logGraphData
-        logGraphData = np.empty(2*logGraphData.shape[0])
-        logGraphData[:tmp.shape[0]] = tmp
+    if size >= logGraphDataU.shape[0]:
+        tmp = logGraphDataU
+        logGraphDataU = np.empty(2*logGraphDataU.shape[0])
+        logGraphDataU[:tmp.shape[0]] = tmp
         
-    logGraphData[size-1] = sample["measureLower"]["value"]
+    if size >= logGraphDataL.shape[0]:
+        tmp = logGraphDataL
+        logGraphDataL = np.empty(2*logGraphDataL.shape[0])
+        logGraphDataL[:tmp.shape[0]] = tmp
+        
+    logGraphDataL[size-1] = sample["measureLower"]["value"]
+    logGraphDataU[size-1] = sample["measureUpper"]["value"]
     #print(sample)
 
 
@@ -150,7 +158,7 @@ def DecodeMeasurement(unpackedDisplay):
 
     #remove F or C
     if s[-1:] in ["F", "C"]: 
-        unit = s[-1:]
+        unit = "°" + s[-1:]
         s = s[:-1]
 
     unitOrg = unit
@@ -371,37 +379,64 @@ def SampleLoop(ser):
         time.sleep(0.01)
 
 def UpdateGraph():
-    global curve
-    global pl
+    global curveU
+    global plU
+    global curveL
+    global plL
     global logSamples
-    global logGraphData
+    global logGraphDataU
+    global logGraphDataL
     
     size = len(logSamples)
 
     if size>0:
-        curve.setData(logGraphData[:size])
+
+        curveL.setData(logGraphDataL[:size])
         label = logSamples[size-1]["measureLower"]["source"]
         unit =  logSamples[size-1]["measureLower"]["unit"]
-        pl.getAxis('left').setLabel(label, unit)
+        plL.getAxis('left').setLabel(label, unit)
+        plL.setTitle(label)
+
+        curveU.setData(logGraphDataU[:size])
+        label = logSamples[size-1]["measureUpper"]["source"]
+        unit =  logSamples[size-1]["measureUpper"]["unit"]
+        plU.getAxis('left').setLabel(label, unit)
+        plU.setTitle(label)
+
 
 
 def InitGraph():
     global win
-    global curve
-    global pl
+    global curveU
+    global plU
+    global curveL
+    global plL
 
     win = pg.GraphicsWindow()
     win.setWindowTitle('PyBry')
 
-    pl = win.addPlot()
-    pl.setDownsampling(mode='peak')
-    pl.getAxis('left').setGrid(128)
-    pl.getAxis('left').enableAutoSIPrefix(True)
-    pl.getAxis('bottom').setGrid(128)
-    pl.setClipToView(True)
-    #p3.setRange(xRange=[-100, 0])
-    #p3.setLimits(xMax=0)
-    curve = pl.plot()
+    plU = win.addPlot()
+    plU.setDownsampling(mode='mean')
+    plU.getAxis('left').setGrid(128)
+    plU.getAxis('left').enableAutoSIPrefix(True)
+    plU.getAxis('bottom').setGrid(128)
+    plU.setClipToView(True)
+    curveU = plU.plot()
+
+    win.nextRow()
+
+    plL = win.addPlot()
+    plL.setDownsampling(mode='mean')
+    plL.getAxis('left').setGrid(128)
+    plL.getAxis('left').enableAutoSIPrefix(True)
+    plL.getAxis('bottom').setGrid(128)
+    plL.setClipToView(True)
+    curveL = plL.plot()
+
+    plL.setXLink(plU)
+    plU.setXLink(plL)
+
+
     
 class SamplingThread(QtCore.QThread):
     def __init__(self):
