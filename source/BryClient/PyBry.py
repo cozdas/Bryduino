@@ -84,6 +84,8 @@ class Connection:
             print("Serial port Exception " + self.portName)
 
     def SampleLoop(self):
+        global history
+
         #make sure DMM is not sending while we start so that we don't start packets in the midle.
         self.ser.write("Stop".encode())
         self.ser.flushOutput()
@@ -112,7 +114,7 @@ class Connection:
             
                 #record and display
                 PrintSample(sample, unpackedData)
-                AddSampleToHistory(sample)
+                history.AddSampleToHistory(sample)
         
             #if time to reset watchdog, do it
             if time.time() > self.nextWatchdogReset:
@@ -123,43 +125,43 @@ class Connection:
         self.ser.write("Stop".encode())
         self.ser.reset_input_buffer()
 
+#====================================================================================
+# SampleHistory
+#====================================================================================
+class SampleHistory:
 
-#globals
-logSamples = []
-logGraphData = np.empty((3,100))
-dataLock = threading.Lock()
+    def __init__(self):
+        self.dataLock = threading.Lock()
+        self.clearSampleHistory()
+        
 
-def AddSampleToHistory(sample):
-    global logSamples
-    global logGraphData
+    def AddSampleToHistory(self, sample):
 
-    with dataLock:
-        logSamples.append(sample)
+        with self.dataLock:
+            self.logSamples.append(sample)
     
-        #grow graph data by 2x
-        sampleSize = len(logSamples)
-        graphSize = logGraphData.shape[1]
-        if sampleSize >= graphSize:
-            newData = np.empty((3,2*graphSize))
-            newData[:,:graphSize] = logGraphData
-            logGraphData = newData
+            #grow graph data by 2x
+            sampleSize = len(self.logSamples)
+            graphSize = self.logGraphData.shape[1]
+            if sampleSize >= graphSize:
+                newData = np.empty((3,2*graphSize))
+                newData[:,:graphSize] = self.logGraphData
+                self.logGraphData = newData
     
-        logGraphData[0,sampleSize-1] = sample["timestamp"]    
-        logGraphData[1,sampleSize-1] = sample["measureLower"]["value"]
-        logGraphData[2,sampleSize-1] = sample["measureUpper"]["value"]
-        #print(sample)
+            self.logGraphData[0,sampleSize-1] = sample["timestamp"]    
+            self.logGraphData[1,sampleSize-1] = sample["measureLower"]["value"]
+            self.logGraphData[2,sampleSize-1] = sample["measureUpper"]["value"]
+            #print(sample)
 
-def clearSampleHistory():
-    global logSamples
-    global logGraphData
+    def clearSampleHistory(self):
+        with self.dataLock:
+            self.logSamples = [] #this effectively  resets the pointer
+            self.logGraphData = np.empty((3,100)) 
+          
+#create an instance
+history = SampleHistory()
 
-    with dataLock:
-        logSamples = []
 
-def ToggleXAxis():
-    global XAxisTime
-    XAxisTime = not XAxisTime
-    ##TOOD: force update in case data is invisible
 
 #Segment data to character map (7 MSB only)
 segments ={
@@ -451,14 +453,19 @@ def UnpackBytes(inbytes):
     return unpack
 
 
+def ToggleXAxis():
+    global XAxisTime
+    XAxisTime = not XAxisTime
+    ##TOOD: force update in case data is invisible
 
 def UpdateValueLabels():
     global labelUp
     global labelMain
+    global history
 
-    if len(logSamples)>0:
-        with dataLock:
-            sample = logSamples[-1]
+    if len(history.logSamples)>0:
+        with history.dataLock:
+            sample = history.logSamples[-1]
             labelUp.setText(sample["measureUpper"]["text"] + sample["measureUpper"]["unitOrg"])
             labelMain.setText(sample["measureLower"]["text"] + sample["measureLower"]["unitOrg"])
 
@@ -471,22 +478,21 @@ def UpdateGraph():
     global plU
     global curveL
     global plL
-    global logSamples
-    global logGraphData
+    global history
     
-    size = len(logSamples)
+    size = len(history.logSamples)
 
     if size>0:
-        with dataLock:
-            curveL.setData(x=logGraphData[0, :size] if XAxisTime else None, y=logGraphData[1, :size])
-            label = logSamples[size-1]["measureLower"]["source"]
-            unit =  logSamples[size-1]["measureLower"]["unit"]
+        with history.dataLock:
+            curveL.setData(x=history.logGraphData[0, :size] if XAxisTime else None, y=history.logGraphData[1, :size])
+            label = history.logSamples[size-1]["measureLower"]["source"]
+            unit =  history.logSamples[size-1]["measureLower"]["unit"]
             plL.getAxis('left').setLabel(label, unit)
             plL.setTitle(label)
 
-            curveU.setData(x=logGraphData[0, :size] if XAxisTime else None, y=logGraphData[2, :size])
-            label = logSamples[size-1]["measureUpper"]["source"]
-            unit =  logSamples[size-1]["measureUpper"]["unit"]
+            curveU.setData(x=history.logGraphData[0, :size] if XAxisTime else None, y=history.logGraphData[2, :size])
+            label = history.logSamples[size-1]["measureUpper"]["source"]
+            unit =  history.logSamples[size-1]["measureUpper"]["unit"]
             plU.getAxis('left').setLabel(label, unit)
             plU.setTitle(label)
 
@@ -514,6 +520,7 @@ def InitGraph(conn):
     global app
     global labelUp
     global labelMain
+    global history
 
     #create the window
     #win = pg.GraphicsWindow()
@@ -568,7 +575,7 @@ def InitGraph(conn):
     wL2.addWidget(startBt,row=3, col=0)
     wL2.addWidget(stopBt,row=4, col=0)
 
-    clearBt.clicked.connect(clearSampleHistory)
+    clearBt.clicked.connect(history.clearSampleHistory)
     xAxisBt.clicked.connect(ToggleXAxis)
     startBt.clicked.connect(conn.Start)
     stopBt.clicked.connect(conn.Stop)
