@@ -26,13 +26,102 @@ from pyqtgraph.dockarea import *
 
 
 #Some constants
-PortName            = 'Com9'
+PORTNAME            = 'Com9'
 Nread               = 20
 WatchdogResetPeriod = 60 #seconds
 DebugOn             = True
 LinkAxes            = False
 XAxisTime           = False
 
+
+'''
+class SamplingThread(QtCore.QThread):
+    def __init__(self, connection):
+        QtCore.QThread.__init__(self)
+        self.conn = connection
+
+    def __del__(self):
+        self.wait()
+
+    def run(self):
+        self.conn.OpenAndSample()
+'''
+
+#====================================================================================
+# Connection
+#====================================================================================
+class Connection:
+    def __init__(self):
+        self.portName = PORTNAME
+        self.ser = None
+        self.doRun = False
+
+    def Start(self):
+        if not self.doRun:
+            self.doRun = True
+            thread = threading.Thread(target = self.OpenAndSample)
+            thread.start()
+        
+    def Stop(self):
+        if self.doRun:
+            self.ser.write("Stop".encode())
+            self.ser.flushOutput()
+            time.sleep(0.1)
+            self.ser.flushInput()
+            self.doRun = False
+
+    def ResetWatchdog(self):
+        self.ser.write("Go".encode())
+        self.nextWatchdogReset = time.time() + WatchdogResetPeriod
+        if DebugOn:    
+            print("*********Watchdog Reset**********")
+
+    def OpenAndSample(self):
+        try:
+            with serial.Serial(self.portName) as self.ser:
+                self.SampleLoop()
+        except serial.SerialException as e:
+            print("Serial port Exception " + self.portName)
+
+    def SampleLoop(self):
+        #make sure DMM is not sending while we start so that we don't start packets in the midle.
+        self.ser.write("Stop".encode())
+        self.ser.flushOutput()
+        time.sleep(0.1)
+        
+        #flush the input buffer
+        while self.ser.in_waiting>0:
+            self.ser.write("Stop".encode())
+            self.ser.reset_input_buffer()
+            time.sleep(0.1)
+
+        self.ResetWatchdog()
+
+        #Main loop: sample and reset watchdog
+        while self.doRun:
+            if self.ser.in_waiting >=Nread:
+                #read the raw bytes
+                inbytes = self.ser.read(Nread)
+                sample = {"inbytes":inbytes, "timestamp":time.time()}
+            
+                #unpack the bits and 7 segment data
+                unpackedData = UnpackBytes(inbytes)
+            
+                #decode the unpacked data to meaninful states and measurements with units
+                sample["state"], sample["measureUpper"], sample["measureLower"] = DecodeUnpackedData(unpackedData)
+            
+                #record and display
+                PrintSample(sample, unpackedData)
+                AddSampleToHistory(sample)
+        
+            #if time to reset watchdog, do it
+            if time.time() > self.nextWatchdogReset:
+                self.nextWatchdogReset = self.ResetWatchdog()
+            time.sleep(0.01)
+        
+        #stop the DMM
+        self.ser.write("Stop".encode())
+        self.ser.reset_input_buffer()
 
 #globals
 logSamples = []
@@ -360,12 +449,6 @@ def UnpackBytes(inbytes):
 
     return unpack
 
-def ResetWatchdog(ser):
-    ser.write("Go".encode())
-    nextWatchdogReset = time.time() + WatchdogResetPeriod
-    if DebugOn:    
-        print("*********Watchdog Reset**********")
-    return nextWatchdogReset
 
 
 def UpdateValueLabels():
@@ -381,33 +464,6 @@ def UpdateValueLabels():
         labelUp.repaint()
         labelMain.repaint()
     
-def SampleLoop(ser):
-    #flush the input buffer
-    ser.reset_input_buffer()
-
-    nextWatchdogReset = ResetWatchdog(ser)
-
-    #Main loop: sample and reset watchdog
-    while True:
-        if ser.in_waiting >=Nread:
-            #read the raw bytes
-            inbytes = ser.read(Nread)
-            sample = {"inbytes":inbytes, "timestamp":time.time()}
-            
-            #unpack the bits and 7 segment data
-            unpackedData = UnpackBytes(inbytes)
-            
-            #decode the unpacked data to meaninful states and measurements with units
-            sample["state"], sample["measureUpper"], sample["measureLower"] = DecodeUnpackedData(unpackedData)
-            
-            #record and display
-            PrintSample(sample, unpackedData)
-            AddSampleToHistory(sample)
-        
-        #if time to reset watchdog, do it
-        if time.time() > nextWatchdogReset:
-            nextWatchdogReset = ResetWatchdog(ser)
-        time.sleep(0.01)
 
 def UpdateGraph():
     global curveU
@@ -448,7 +504,7 @@ class TimeAxisItem(pg.AxisItem):
 
 
 
-def InitGraph():
+def InitGraph(conn):
     global win
     global curveU
     global plU
@@ -499,12 +555,23 @@ def InitGraph():
     clearBt = QtGui.QPushButton('Clear History')
     saveBt  = QtGui.QPushButton('Save to CSV')
     xAxisBt = QtGui.QPushButton('Toggle X Axis')
+    startBt = QtGui.QPushButton('Start')
+    stopBt  = QtGui.QPushButton('Stop')
+
     saveBt.setEnabled(False)
+
+
     wL2.addWidget(clearBt, row=0, col=0)
     wL2.addWidget(saveBt,row=1, col=0)
-    wL2.addWidget(xAxisBt,row=3, col=0)
+    wL2.addWidget(xAxisBt,row=2, col=0)
+    wL2.addWidget(startBt,row=3, col=0)
+    wL2.addWidget(stopBt,row=4, col=0)
+
     clearBt.clicked.connect(clearSampleHistory)
     xAxisBt.clicked.connect(ToggleXAxis)
+    startBt.clicked.connect(conn.Start)
+    stopBt.clicked.connect(conn.Stop)
+
     dSet.addWidget(wL2)
 
     #graph widgets
@@ -540,18 +607,6 @@ def InitGraph():
     dGr1.addWidget(wgU)
     dGr2.addWidget(wgL)
     win.show()
-    
-class SamplingThread(QtCore.QThread):
-    def __init__(self):
-        QtCore.QThread.__init__(self)
-
-    def __del__(self):
-        self.wait()
-
-    def run(self):
-        with serial.Serial(PortName) as ser:
-            print(ser)
-            SampleLoop(ser)
 
 def Update():
     UpdateValueLabels()
@@ -560,18 +615,19 @@ def Update():
 
 if __name__ == "__main__":
     import sys
+   
+    conn = Connection()
 
     #init graph
-    InitGraph()
+    InitGraph(conn)
 
-    #setup update timer
+    #setup update timer as gui updates need to done via the main thread
     timer = QtCore.QTimer()
     timer.timeout.connect(Update)
     timer.start(50)
 
     #run the background sampling thread 
-    samplingThread = SamplingThread()
-    samplingThread.start()
+    #conn.Start()
 
     #run the application
     if (sys.flags.interactive != 1) or not hasattr(QtCore, 'PYQT_VERSION'):
