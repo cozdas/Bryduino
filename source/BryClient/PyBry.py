@@ -31,7 +31,7 @@ Nread               = 20
 WatchdogResetPeriod = 60 #seconds
 DebugOn             = True
 LinkAxes            = False
-XAxisTime           = False
+XAxisTime           = True
 
 
 '''
@@ -63,7 +63,7 @@ class Connection:
             thread.start()
         
     def Stop(self):
-        if self.doRun:
+        if self.ser!=None and self.ser.is_open:
             self.ser.write("Stop".encode())
             self.ser.flushOutput()
             time.sleep(0.1)
@@ -116,12 +116,13 @@ class Connection:
         
             #if time to reset watchdog, do it
             if time.time() > self.nextWatchdogReset:
-                self.nextWatchdogReset = self.ResetWatchdog()
+                self.ResetWatchdog()
             time.sleep(0.01)
         
         #stop the DMM
         self.ser.write("Stop".encode())
         self.ser.reset_input_buffer()
+
 
 #globals
 logSamples = []
@@ -158,7 +159,7 @@ def clearSampleHistory():
 def ToggleXAxis():
     global XAxisTime
     XAxisTime = not XAxisTime
-
+    ##TOOD: force update in case data is invisible
 
 #Segment data to character map (7 MSB only)
 segments ={
@@ -498,7 +499,7 @@ class TimeAxisItem(pg.AxisItem):
     def tickStrings(self, values, scale, spacing):
         #print("*")
         if XAxisTime:
-            return [time.strftime("%H:%M:%S", time.localtime(value)) for value in values]
+            return [time.strftime("%H:%M:%S", time.localtime(max(value,0))) for value in values]
         return super().tickStrings(values, scale, spacing)
         
 
