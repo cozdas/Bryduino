@@ -32,7 +32,6 @@ Nread               = 20
 WatchdogResetPeriod = 60 #seconds
 DebugOn             = True
 LinkAxes            = False
-XAxisTime           = True
 
 
 #====================================================================================
@@ -461,192 +460,182 @@ class BrymenDecoder:
  
         print("") #newline
 
-
-
-def ToggleXAxis():
-    global plU
-    global plL
-    global XAxisTime
-    XAxisTime = not XAxisTime
-    ##TOOD: force update in case data is invisible
-        
-
-def UpdateValueLabels():
-    global labelUp
-    global labelMain
-    global history
-
-    if len(history.logSamples)>0:
-        with history.dataLock:
-            sample = history.logSamples[-1]
-            labelUp.setText(sample["measureUpper"]["text"] + sample["measureUpper"]["unitOrg"])
-            labelMain.setText(sample["measureLower"]["text"] + sample["measureLower"]["unitOrg"])
-
-        labelUp.repaint()
-        labelMain.repaint()
-    
-
-def UpdateGraph():
-    global curveU
-    global plU
-    global curveL
-    global plL
-    global history
-    
-    size = len(history.logSamples)
-
-    if size>0:
-        with history.dataLock:
-            curveL.setData(x=history.logGraphData[0, :size] if XAxisTime else None, y=history.logGraphData[1, :size])
-            label = history.logSamples[size-1]["measureLower"]["source"]
-            unit =  history.logSamples[size-1]["measureLower"]["unit"]
-            plL.getAxis('left').setLabel(label, unit)
-            plL.setTitle(label)
-
-            curveU.setData(x=history.logGraphData[0, :size] if XAxisTime else None, y=history.logGraphData[2, :size])
-            label = history.logSamples[size-1]["measureUpper"]["source"]
-            unit =  history.logSamples[size-1]["measureUpper"]["unit"]
-            plU.getAxis('left').setLabel(label, unit)
-            plU.setTitle(label)
-
-
-##TODO: may want to move this to data recording to eliminate recomputation on data update if this turns out to be slow
 class TimeAxisItem(pg.AxisItem):
+    XAxisTime = True
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
     def tickStrings(self, values, scale, spacing):
         #print("*")
-        if XAxisTime:
+        if self.XAxisTime:
             return [time.strftime("%H:%M:%S", time.localtime(max(value,0))) for value in values]
         return super().tickStrings(values, scale, spacing)
+
+
+class BrymenUI:
+    '''
+    '''
+    def ToggleXAxis(self):
+        TimeAxisItem.XAxisTime = not TimeAxisItem.XAxisTime
+        ##TOOD: force update in case data is invisible
         
-def PickFile():
-    options = QFileDialog.Options()
-    #options |= QFileDialog.DontUseNativeDialog
-    fileName, _ = QFileDialog.getOpenFileName(None, "Save output CSV file", "","All Files (*);;Comma Separated Values (*.csv)", options=options)
+
+    def UpdateValueLabels(self):
+        global history
+
+        if len(history.logSamples)>0:
+            with history.dataLock:
+                sample = history.logSamples[-1]
+                self.labelUp.setText(sample["measureUpper"]["text"] + sample["measureUpper"]["unitOrg"])
+                self.labelMain.setText(sample["measureLower"]["text"] + sample["measureLower"]["unitOrg"])
+
+            self.labelUp.repaint()
+            self.labelMain.repaint()
+    
+
+    def UpdateGraph(self):
+        global history
+    
+        size = len(history.logSamples)
+
+        if size>0:
+            with history.dataLock:
+                self.curveL.setData(x=history.logGraphData[0, :size] if TimeAxisItem.XAxisTime else None, y=history.logGraphData[1, :size])
+                label = history.logSamples[size-1]["measureLower"]["source"]
+                unit =  history.logSamples[size-1]["measureLower"]["unit"]
+                self.plL.getAxis('left').setLabel(label, unit)
+                self.plL.setTitle(label)
+
+                self.curveU.setData(x=history.logGraphData[0, :size] if TimeAxisItem.XAxisTime else None, y=history.logGraphData[2, :size])
+                label = history.logSamples[size-1]["measureUpper"]["source"]
+                unit =  history.logSamples[size-1]["measureUpper"]["unit"]
+                self.plU.getAxis('left').setLabel(label, unit)
+                self.plU.setTitle(label)
+       
+    def PickFile(self):
+        options = QFileDialog.Options()
+        #options |= QFileDialog.DontUseNativeDialog
+        fileName, _ = QFileDialog.getOpenFileName(None, "Save output CSV file", "","All Files (*);;Comma Separated Values (*.csv)", options=options)
 
 
-def InitGraph(conn):
-    global win
-    global curveU
-    global plU
-    global curveL
-    global plL
-    global app
-    global labelUp
-    global labelMain
-    #global history
+    def InitGraph(self, conn):
+        global win
+        global app
+        #global history
 
-    #create the window
-    #win = pg.GraphicsWindow()
-    app = QtGui.QApplication([])
-    win = QtGui.QMainWindow()
-    win.setWindowTitle('PyBry')
+        #create the window
+        #win = pg.GraphicsWindow()
+        app = QtGui.QApplication([])
+        win = QtGui.QMainWindow()
+        win.setWindowTitle('PyBry')
 
-    #create the docking area
-    area = DockArea()
-    win.setCentralWidget(area)
-    win.resize(1000,500)
+        #create the docking area
+        area = DockArea()
+        win.setCentralWidget(area)
+        win.resize(1000,500)
 
-    #create docks
-    dDis = Dock("Display", size=(100,100))
-    dSet = Dock("Settings", size=(50,1))
-    dGr1 = Dock("Upper Display", size=(900,250))
-    dGr2 = Dock("Main Display", size=(900,250))
+        #create docks
+        dDis = Dock("Display", size=(100,100))
+        dSet = Dock("Settings", size=(50,1))
+        dGr1 = Dock("Upper Display", size=(900,250))
+        dGr2 = Dock("Main Display", size=(900,250))
 
-    #place the docks in the area
-    area.addDock(dDis, 'left')
-    area.addDock(dSet, 'bottom', dDis)
-    area.addDock(dGr1, 'right')
-    area.addDock(dGr2, 'bottom', dGr1) #share the bottom edge of d1
+        #place the docks in the area
+        area.addDock(dDis, 'left')
+        area.addDock(dSet, 'bottom', dDis)
+        area.addDock(dGr1, 'right')
+        area.addDock(dGr2, 'bottom', dGr1) #share the bottom edge of d1
 
-    #Display Widget
-    font1=QtGui.QFont("SansSerif", 16, QtGui.QFont.Bold)     
-    font2=QtGui.QFont("SansSerif", 20, QtGui.QFont.Bold)     
-    labelUp   = QtGui.QLabel("0.000V")
-    labelMain = QtGui.QLabel("0.00000V")
-    labelUp.setFont(font1)
-    labelMain.setFont(font2)
-    wL1 = pg.LayoutWidget()
-    wL1.addWidget(labelUp, row=0, col=0)
-    wL1.addWidget(labelMain, row=1, col=0)
-    dDis.addWidget(wL1)
+        #Display Widget
+        font1=QtGui.QFont("SansSerif", 16, QtGui.QFont.Bold)     
+        font2=QtGui.QFont("SansSerif", 20, QtGui.QFont.Bold)     
+        self.labelUp   = QtGui.QLabel("0.000V")
+        self.labelMain = QtGui.QLabel("0.00000V")
+        self.labelUp.setFont(font1)
+        self.labelMain.setFont(font2)
+        wL1 = pg.LayoutWidget()
+        wL1.addWidget(self.labelUp, row=0, col=0)
+        wL1.addWidget(self.labelMain, row=1, col=0)
+        dDis.addWidget(wL1)
         
-    #setting widgets
-    wL2 = pg.LayoutWidget()
-    clearBt = QtGui.QPushButton('Clear History')
-    saveBt  = QtGui.QPushButton('Save to CSV')
-    xAxisBt = QtGui.QPushButton('Toggle X Axis')
+        #setting widgets
+        wL2 = pg.LayoutWidget()
+        clearBt = QtGui.QPushButton('Clear History')
+        saveBt  = QtGui.QPushButton('Save to CSV')
+        xAxisBt = QtGui.QPushButton('Toggle X Axis')
 
-    portTxt = QtGui.QLineEdit(PORTNAME)
-    startBt = QtGui.QPushButton('Start')
-    stopBt  = QtGui.QPushButton('Stop')
+        portTxt = QtGui.QLineEdit(PORTNAME)
+        startBt = QtGui.QPushButton('Start')
+        stopBt  = QtGui.QPushButton('Stop')
 
-    #saveBt.setEnabled(False)
+        #saveBt.setEnabled(False)
 
-    wL2.addWidget(clearBt, row=0, col=0)
-    wL2.addWidget(saveBt,row=1, col=0)
-    wL2.addWidget(xAxisBt,row=2, col=0)
-    wL2.addWidget(portTxt, row=3, col=0)
-    wL2.addWidget(startBt,row=4, col=0)
-    wL2.addWidget(stopBt,row=5, col=0)
+        wL2.addWidget(clearBt, row=0, col=0)
+        wL2.addWidget(saveBt,row=1, col=0)
+        wL2.addWidget(xAxisBt,row=2, col=0)
+        wL2.addWidget(portTxt, row=3, col=0)
+        wL2.addWidget(startBt,row=4, col=0)
+        wL2.addWidget(stopBt,row=5, col=0)
 
-    clearBt.clicked.connect(history.clearSampleHistory)
-    saveBt.clicked.connect(PickFile)
-    xAxisBt.clicked.connect(ToggleXAxis)
-    startBt.clicked.connect(lambda: conn.Start(portTxt))
-    stopBt.clicked.connect(conn.Stop)
+        clearBt.clicked.connect(history.clearSampleHistory)
+        saveBt.clicked.connect(self.PickFile)
+        xAxisBt.clicked.connect(self.ToggleXAxis)
+        startBt.clicked.connect(lambda: conn.Start(portTxt))
+        stopBt.clicked.connect(conn.Stop)
 
-    dSet.addWidget(wL2)
+        dSet.addWidget(wL2)
 
-    #graph widgets
-    wgU = pg.PlotWidget(axisItems={'bottom': TimeAxisItem(orientation='bottom')})
-    wgL = pg.PlotWidget(axisItems={'bottom': TimeAxisItem(orientation='bottom')})
+        #graph widgets
+        #wgU = pg.PlotWidget(axisItems={'bottom': TimeAxisItem(orientation='bottom')})
+        #wgL = pg.PlotWidget(axisItems={'bottom': TimeAxisItem(orientation='bottom')})
+        wgU = pg.PlotWidget()
+        wgL = pg.PlotWidget()
 
-    plU = wgU.getPlotItem()
-    plL = wgL.getPlotItem()
+        self.plU = wgU.getPlotItem()
+        self.plL = wgL.getPlotItem()
 
-    plU.setDownsampling(mode='mean')
-    plU.getAxis('left').setGrid(128)
-    plU.getAxis('left').enableAutoSIPrefix(True)
-    plU.getAxis('bottom').setGrid(128)
-    plU.setClipToView(True)
-    curveU = plU.plot()
+        self.plU.setDownsampling(mode='mean')
+        self.plU.getAxis('left').setGrid(128)
+        self.plU.getAxis('left').enableAutoSIPrefix(True)
+        self.plU.getAxis('bottom').setGrid(128)
+        self.plU.setClipToView(True)
+        self.curveU = self.plU.plot()
 
-    plL.setDownsampling(mode='mean')
-    plL.getAxis('left').setGrid(128)
-    plL.getAxis('left').enableAutoSIPrefix(True)
-    plL.getAxis('bottom').setGrid(128)
-    plL.setClipToView(True)
-    curveL = plL.plot()
+        self.plL.setDownsampling(mode='mean')
+        self.plL.getAxis('left').setGrid(128)
+        self.plL.getAxis('left').enableAutoSIPrefix(True)
+        self.plL.getAxis('bottom').setGrid(128)
+        self.plL.setClipToView(True)
+        self.curveL = self.plL.plot()
 
-    #link the x axis
-    if LinkAxes:
-        plL.setXLink(plU)
-        plU.setXLink(plL)
+        #link the x axis
+        if LinkAxes:
+            self.plL.setXLink(self.plU)
+            self.plU.setXLink(slef.plL)
 
-    #place graph widgets in the docks
-    dGr1.addWidget(wgU)
-    dGr2.addWidget(wgL)
-    win.show()
+        #place graph widgets in the docks
+        dGr1.addWidget(wgU)
+        dGr2.addWidget(wgL)
+        win.show()
 
-def Update():
-    UpdateValueLabels()
-    UpdateGraph()
+    def Update(self):
+        self.UpdateValueLabels()
+        self.UpdateGraph()
 
 
 if __name__ == "__main__":
     import sys
    
     conn = Connection()
+    bryui = BrymenUI()
 
     #init graph
-    InitGraph(conn)
+    bryui.InitGraph(conn)
 
     #setup update timer as gui updates need to done via the main thread
     timer = QtCore.QTimer()
-    timer.timeout.connect(Update)
+    timer.timeout.connect(bryui.Update)
     timer.start(50)
 
     #run the background sampling thread 
