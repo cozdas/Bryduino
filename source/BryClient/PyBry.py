@@ -1,6 +1,6 @@
 ''' 
 ====================================================
-PyBry: Brymen DMM data connection client v0.01
+PyBry: Brymen DMM data connection client v0.02
 ====================================================
 
 Sample data layout
