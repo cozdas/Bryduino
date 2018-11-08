@@ -516,7 +516,7 @@ class BrymenUI:
     def PickFile(self):
         options = QFileDialog.Options()
         #options |= QFileDialog.DontUseNativeDialog
-        fileName, _ = QFileDialog.getOpenFileName(None, "Save output CSV file", "","All Files (*);;Comma Separated Values (*.csv)", options=options)
+        fileName, _ = QFileDialog.getSaveFileName(None, "Save output CSV file", "","All Files (*);;Comma Separated Values (*.csv)", options=options)
 
 
     def InitGraph(self, conn):
