@@ -587,10 +587,10 @@ class BrymenUI:
         dSet.addWidget(wL2)
 
         #graph widgets
-        #wgU = pg.PlotWidget(axisItems={'bottom': TimeAxisItem(orientation='bottom')})
-        #wgL = pg.PlotWidget(axisItems={'bottom': TimeAxisItem(orientation='bottom')})
-        wgU = pg.PlotWidget()
-        wgL = pg.PlotWidget()
+        wgU = pg.PlotWidget(axisItems={'bottom': TimeAxisItem(orientation='bottom')})
+        wgL = pg.PlotWidget(axisItems={'bottom': TimeAxisItem(orientation='bottom')})
+        #wgU = pg.PlotWidget()
+        #wgL = pg.PlotWidget()
 
         self.plU = wgU.getPlotItem()
         self.plL = wgL.getPlotItem()
