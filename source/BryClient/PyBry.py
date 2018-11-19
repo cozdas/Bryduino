@@ -5,7 +5,8 @@ PyBry: Brymen DMM data connection client v0.02
 
 Sample data layout
 sample
-    timestamp
+    pctimestamp //received time wall clock
+    timecode    //milliseconds since arduino boot (note: arduino reboots upon serial connection)
     inbytes
     state
     measureUpper   
@@ -13,7 +14,7 @@ sample
 '''
 
 #for Brymen connection
-import serial
+import serial #pyserial
 import time
 import threading
 import numpy as np
@@ -24,11 +25,12 @@ import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtGui
 from PyQt5.QtWidgets import QFileDialog
 from pyqtgraph.dockarea import *
+from datetime import timedelta
 
 
 #Some constants
 PORTNAME            = 'Com9'
-Nread               = 20
+Nread               = 24
 WatchdogResetPeriod = 60 #seconds
 DebugOn             = True
 LinkAxes            = False
@@ -39,29 +41,50 @@ LinkAxes            = False
 #====================================================================================
 class Connection:
     def __init__(self):
-        self.portName = PORTNAME
+        self.portName = ''
         self.ser = None
         self.doRun = False
-        self.threadRunning = False;
+        self.killThread = False
+        self.threadRunning = False
+        self.runEvent = threading.Event()
 
     def Start(self, portTxtControl):
+        #stop the thread and disconnect if another port is requested
+        if portTxtControl.text() != self.portName:
+            self.killThread = True
+            self.runEvent.set()
+            while(self.threadRunning):
+                time.sleep(0.01)
+            self.runEvent.clear()
+            
         if not self.threadRunning:
             self.portName = portTxtControl.text()
-            self.doRun = True
+            self.killThread = False
             thread = threading.Thread(target = self.OpenAndSample)
             thread.start()
-            #portTxtControl.setEnabled(False)
+
+        self.runEvent.set()
+        #portTxtControl.setEnabled(False)
         
     def Stop(self):
         if self.ser!=None and self.ser.is_open:
-            self.ser.write("Stop".encode())
+            self.ser.write("[Stop]".encode())
             self.ser.flushOutput()
             time.sleep(0.1)
             self.ser.flushInput()
-            self.doRun = False
+            self.runEvent.clear()
+
+    def SetPeriod(self, periodTxtControl):
+        if self.ser!=None and self.ser.is_open:
+            cmd="[Per={}]".format(periodTxtControl.text())
+            self.ser.write(cmd.encode())
+            self.ser.flushOutput()
+            time.sleep(0.1)
+            self.ser.flushInput()
+
 
     def ResetWatchdog(self):
-        self.ser.write("Go".encode())
+        self.ser.write("[Rst]".encode())
         self.nextWatchdogReset = time.time() + WatchdogResetPeriod
         if DebugOn:    
             print("*********Watchdog Reset**********")
@@ -80,32 +103,34 @@ class Connection:
         global history
 
         #make sure DMM is not sending while we start so that we don't start packets in the midle.
-        self.ser.write("Stop".encode())
+        # turns out this is unnecessary as Arduino uno resets on serial connection
+        self.ser.write("[Stop]".encode())
         self.ser.flushOutput()
         time.sleep(0.1)
         
         #flush the input buffer
         while self.ser.in_waiting>0:
-            self.ser.write("Stop".encode())
+            self.ser.write("[Stop]".encode())
             self.ser.reset_input_buffer()
             time.sleep(0.1)
+        
 
         self.ResetWatchdog()
 
         decoder = BrymenDecoder()
 
         #Main loop: sample and reset watchdog
-        while self.doRun:
+        while not self.killThread:
             if self.ser.in_waiting >=Nread:
                 #read the raw bytes
                 inbytes = self.ser.read(Nread)
-                sample = {"inbytes":inbytes, "timestamp":time.time()}
+                sample = {"inbytes":inbytes, "pctimestamp":time.time()}
             
                 #unpack the bits and 7 segment data
                 unpackedData = decoder.UnpackBytes(inbytes)
             
                 #decode the unpacked data to meaninful states and measurements with units
-                sample["state"], sample["measureUpper"], sample["measureLower"] = decoder.DecodeUnpackedData(unpackedData)
+                sample["timecode"], sample["state"], sample["measureUpper"], sample["measureLower"] = decoder.DecodeUnpackedData(unpackedData)
             
                 #record and display
                 decoder.PrintSample(sample, decoder, unpackedData)
@@ -115,10 +140,24 @@ class Connection:
             if time.time() > self.nextWatchdogReset:
                 self.ResetWatchdog()
             time.sleep(0.01)
-        
-        #stop the DMM
-        self.ser.write("Stop".encode())
-        self.ser.reset_input_buffer()
+
+            #if run event is cleared, stop the DMM and wait for the signal
+            if not self.runEvent.isSet():
+                #stop the DMM
+                self.ser.write("[Stop]".encode())
+                self.ser.flushOutput()
+                #self.ser.reset_input_buffer()
+                time.sleep(0.1)
+                
+                self.runEvent.wait()
+
+                #start the DMM
+                self.ser.write("[Go]".encode())
+                self.ser.flushOutput()
+                #self.ser.reset_input_buffer()
+                time.sleep(0.1)
+
+                
 
 
 class SampleHistory:
@@ -134,27 +173,45 @@ class SampleHistory:
         
 
     def AddSampleToHistory(self, sample):
-
         with self.dataLock:
             self.logSamples.append(sample)
     
             #grow graph data by 2x
-            sampleSize = len(self.logSamples)
-            graphSize = self.logGraphData.shape[1]
-            if sampleSize >= graphSize:
-                newData = np.empty((3,2*graphSize))
-                newData[:,:graphSize] = self.logGraphData
+            sampleIdx = self.logGraphLen
+            self.logGraphLen +=1 
+            graphCapacity = self.logGraphData.shape[1]
+            if self.logGraphLen >= graphCapacity:
+                newData = np.empty((4,2*graphCapacity))
+                newData[:,:graphCapacity] = self.logGraphData
                 self.logGraphData = newData
     
-            self.logGraphData[0,sampleSize-1] = sample["timestamp"]    
-            self.logGraphData[1,sampleSize-1] = sample["measureLower"]["value"]
-            self.logGraphData[2,sampleSize-1] = sample["measureUpper"]["value"]
+            self.logGraphData[0,sampleIdx] = sample["timecode"]    
+            self.logGraphData[1,sampleIdx] = sample["pctimestamp"]    
+            self.logGraphData[2,sampleIdx] = sample["measureLower"]["value"]
+            self.logGraphData[3,sampleIdx] = sample["measureUpper"]["value"]
+
+            self.labels["lower"]["source"] = sample["measureLower"]["source"]
+            self.labels["lower"]["unit"] = sample["measureLower"]["unit"]
+            self.labels["upper"]["source"] = sample["measureUpper"]["source"]
+            self.labels["upper"]["unit"] = sample["measureUpper"]["unit"]
             #print(sample)
 
     def clearSampleHistory(self):
         with self.dataLock:
             self.logSamples = [] #this effectively  resets the pointer
-            self.logGraphData = np.empty((3,100)) 
+            self.logGraphData = np.empty((4,100))
+            self.logGraphLen = 0
+            self.labels = {"upper":{"source":"", "unit":""}, "lower":{"source":"", "unit":""}} 
+
+    def exportCSV(self, fileName):
+        with self.dataLock:
+            headerStr = "Timecode (ms), WallClock (seconds), {} ({}), {} ({})".format(self.labels["lower"]["source"], self.labels["lower"]["unit"], self.labels["upper"]["source"], self.labels["upper"]["unit"])   
+            headerStr = headerStr.replace('Ω', 'Ohm')
+            np.savetxt(fileName, self.logGraphData[:,:self.logGraphLen].T, delimiter=",", fmt='%d,%f,%f,%f', header=headerStr)
+        
+
+
+        
           
 #create an instance
 history = SampleHistory()
@@ -317,6 +374,8 @@ class BrymenDecoder:
         '''
         lit = self.GetLitItems(unpackedData) #get lit items in the common (non-value-specific) section
 
+        timecode = unpackedData["timecode"]
+
         state = {}
 
         state["Holding"] = "Hold" in lit
@@ -339,7 +398,7 @@ class BrymenDecoder:
             measureUpper["unit"]    = measureLower["unit"]
             measureUpper["unitOrg"] = measureLower["unitOrg"]
 
-        return (state, measureUpper, measureLower)
+        return (timecode, state, measureUpper, measureLower)
     
     def UnpackBytes(self, inbytes):
         '''unpacks the bits in the bytearray to named flags and digit character array
@@ -430,6 +489,10 @@ class BrymenDecoder:
         for digit in range(0, 6):
             lower["Segs"].append(self.DecodeDigit(inbytes[2+digit]))
 
+        timecode = (inbytes[23]<<24) +  (inbytes[22]<<16) + (inbytes[21]<<8) + (inbytes[20]);
+        unpack["timecode"] = timecode
+        
+
         return unpack
     
     def PrintMeasurement(self, meas):
@@ -446,6 +509,8 @@ class BrymenDecoder:
         if DebugOn:
             print("{} --> {} {}".format(hexs, ''.join(UnpackLower["Segs"]), ''.join(UnpackUpper["Segs"])))
 
+        #time
+        print("{} - {}".format(sample["timecode"],sample["pctimestamp"]))
         #upper measurement
         self.PrintMeasurement(sample["measureUpper"])
         if DebugOn:
@@ -469,13 +534,18 @@ class TimeAxisItem(pg.AxisItem):
     def tickStrings(self, values, scale, spacing):
         #print("*")
         if self.XAxisTime:
-            return [time.strftime("%H:%M:%S", time.localtime(max(value,0))) for value in values]
+            #return [time.strftime("%H:%M:%S", time.localtime(max(value,0))) for value in values]
+            return [str(timedelta(milliseconds=value)) for value in values]
+            
         return super().tickStrings(values, scale, spacing)
 
 
 class BrymenUI:
     '''
     '''
+    def __init__(self):
+        self.lastFileName = ''
+
     def ToggleXAxis(self):
         TimeAxisItem.XAxisTime = not TimeAxisItem.XAxisTime
         ##TOOD: force update in case data is invisible
@@ -501,23 +571,30 @@ class BrymenUI:
 
         if size>0:
             with history.dataLock:
-                self.curveL.setData(x=history.logGraphData[0, :size] if TimeAxisItem.XAxisTime else None, y=history.logGraphData[1, :size])
-                label = history.logSamples[size-1]["measureLower"]["source"]
-                unit =  history.logSamples[size-1]["measureLower"]["unit"]
+                self.curveL.setData(x=history.logGraphData[0, :size] if TimeAxisItem.XAxisTime else None, y=history.logGraphData[2, :size])
+                label = history.labels["lower"]["source"]
+                unit =  history.labels["lower"]["unit"]
                 self.plL.getAxis('left').setLabel(label, unit)
                 self.plL.setTitle(label)
 
-                self.curveU.setData(x=history.logGraphData[0, :size] if TimeAxisItem.XAxisTime else None, y=history.logGraphData[2, :size])
-                label = history.logSamples[size-1]["measureUpper"]["source"]
-                unit =  history.logSamples[size-1]["measureUpper"]["unit"]
+                self.curveU.setData(x=history.logGraphData[0, :size] if TimeAxisItem.XAxisTime else None, y=history.logGraphData[3, :size])
+                label = history.labels["upper"]["source"]
+                unit =  history.labels["upper"]["unit"]
                 self.plU.getAxis('left').setLabel(label, unit)
                 self.plU.setTitle(label)
        
     def PickFile(self):
+        global history
         options = QFileDialog.Options()
         #options |= QFileDialog.DontUseNativeDialog
-        fileName, _ = QFileDialog.getSaveFileName(None, "Save output CSV file", "","All Files (*);;Comma Separated Values (*.csv)", options=options)
-
+        self.lastFileName, _ = QFileDialog.getSaveFileName(None, "Save output CSV file", self.lastFileName, "All Files (*);;Comma Separated Values (*.csv)", options=options)
+        #fileName = "d:/temp/aa.csv"
+        try:
+            history.exportCSV(self.lastFileName)
+        except Exception as ex:
+            msg = QtGui.QMessageBox(QtGui.QMessageBox.Critical, "Save Failed", str(ex), buttons=QtGui.QMessageBox.Ok)
+            msg.exec_();
+            
 
     def InitGraph(self, conn):
         global win
@@ -568,6 +645,8 @@ class BrymenUI:
         portTxt = QtGui.QLineEdit(PORTNAME)
         startBt = QtGui.QPushButton('Start')
         stopBt  = QtGui.QPushButton('Stop')
+        setPerBt= QtGui.QPushButton('Set Period')
+        perTxt = QtGui.QLineEdit('200')
 
         #saveBt.setEnabled(False)
 
@@ -577,12 +656,15 @@ class BrymenUI:
         wL2.addWidget(portTxt, row=3, col=0)
         wL2.addWidget(startBt,row=4, col=0)
         wL2.addWidget(stopBt,row=5, col=0)
+        wL2.addWidget(setPerBt,row=6, col=0)
+        wL2.addWidget(perTxt,row=6, col=1)
 
         clearBt.clicked.connect(history.clearSampleHistory)
         saveBt.clicked.connect(self.PickFile)
         xAxisBt.clicked.connect(self.ToggleXAxis)
         startBt.clicked.connect(lambda: conn.Start(portTxt))
         stopBt.clicked.connect(conn.Stop)
+        setPerBt.clicked.connect(lambda: conn.SetPeriod(perTxt))
 
         dSet.addWidget(wL2)
 
