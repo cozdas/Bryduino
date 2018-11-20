@@ -114,7 +114,6 @@ class Connection:
             self.ser.reset_input_buffer()
             time.sleep(0.1)
         
-
         self.ResetWatchdog()
 
         decoder = BrymenDecoder()
@@ -125,16 +124,18 @@ class Connection:
                 #read the raw bytes
                 inbytes = self.ser.read(Nread)
                 sample = {"inbytes":inbytes, "pctimestamp":time.time()}
+
+                #make sure the data is not garbage
+                if(inbytes[15:20]==b'\x86\x86\x86\x86\x00'):
+                    #unpack the bits and 7 segment data
+                    unpackedData = decoder.UnpackBytes(inbytes)
             
-                #unpack the bits and 7 segment data
-                unpackedData = decoder.UnpackBytes(inbytes)
+                    #decode the unpacked data to meaninful states and measurements with units
+                    sample["timecode"], sample["state"], sample["measureUpper"], sample["measureLower"] = decoder.DecodeUnpackedData(unpackedData)
             
-                #decode the unpacked data to meaninful states and measurements with units
-                sample["timecode"], sample["state"], sample["measureUpper"], sample["measureLower"] = decoder.DecodeUnpackedData(unpackedData)
-            
-                #record and display
-                decoder.PrintSample(sample, decoder, unpackedData)
-                history.AddSampleToHistory(sample)
+                    #record and display
+                    decoder.PrintSample(sample, decoder, unpackedData)
+                    history.AddSampleToHistory(sample)
         
             #if time to reset watchdog, do it
             if time.time() > self.nextWatchdogReset:
