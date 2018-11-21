@@ -126,7 +126,7 @@ class Connection:
                 sample = {"inbytes":inbytes, "pctimestamp":time.time()}
 
                 #make sure the data is not garbage
-                if(inbytes[15:20]==b'\x86\x86\x86\x86\x00'):
+                if(inbytes[15:19]==b'\x86\x86\x86\x86'):
                     #unpack the bits and 7 segment data
                     unpackedData = decoder.UnpackBytes(inbytes)
             
@@ -136,6 +136,9 @@ class Connection:
                     #record and display
                     decoder.PrintSample(sample, decoder, unpackedData)
                     history.AddSampleToHistory(sample)
+                else:
+                    hexs = ":".join("{:02x}".format(c) for c in inbytes)
+                    print("invalid data stream:", hexs)
         
             #if time to reset watchdog, do it
             if time.time() > self.nextWatchdogReset:
