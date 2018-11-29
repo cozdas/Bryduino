@@ -123,27 +123,42 @@ class Connection:
             if self.ser.in_waiting >=Nread:
                 #read the raw bytes
                 inbytes = self.ser.read(Nread)
-                sample = {"inbytes":inbytes, "pctimestamp":time.time()}
 
                 #make sure the data is not garbage
-                if(inbytes[15:19]==b'\x86\x86\x86\x86'):
-                    #unpack the bits and 7 segment data
-                    unpackedData = decoder.UnpackBytes(inbytes)
+                markerpos = (inbytes+inbytes).find(b'\x86\x86\x86\x86')
+                while(markerpos!=15):
+                    if(markerpos==-1):
+                        hexs = ":".join("{:02x}".format(c) for c in inbytes)
+                        print("invalid data stream:", hexs)
+                        self.ser.reset_input_buffer()
+                    else:
+                        phase = markerpos - 15
+                        if phase<0: phase = Nread+phase
+
+                        nMore = phase
+                        morebytes = self.ser.read(nMore)
+                        inbytes = inbytes[nMore:]  + morebytes
+                    
+                    #now make sure the possibly completed packet is a good one
+                    markerpos = (inbytes+inbytes).find(b'\x86\x86\x86\x86')
+                     
+                #unpack the bits and 7 segment data
+                unpackedData = decoder.UnpackBytes(inbytes)
             
-                    #decode the unpacked data to meaninful states and measurements with units
-                    sample["timecode"], sample["state"], sample["measureUpper"], sample["measureLower"] = decoder.DecodeUnpackedData(unpackedData)
+                #decode the unpacked data to meaninful states and measurements with units
+                sample = {"inbytes":inbytes, "pctimestamp":time.time()}
+                sample["timecode"], sample["state"], sample["measureUpper"], sample["measureLower"] = decoder.DecodeUnpackedData(unpackedData)
             
-                    #record and display
-                    decoder.PrintSample(sample, decoder, unpackedData)
-                    history.AddSampleToHistory(sample)
-                else:
-                    hexs = ":".join("{:02x}".format(c) for c in inbytes)
-                    print("invalid data stream:", hexs)
+                #record and display
+                decoder.PrintSample(sample, decoder, unpackedData)
+                history.AddSampleToHistory(sample)
+
+            else:
+                time.sleep(0.05)
         
             #if time to reset watchdog, do it
             if time.time() > self.nextWatchdogReset:
                 self.ResetWatchdog()
-            time.sleep(0.01)
 
             #if run event is cleared, stop the DMM and wait for the signal
             if not self.runEvent.isSet():
