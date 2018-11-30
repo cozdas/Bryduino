@@ -148,11 +148,10 @@ class Connection:
                 #decode the unpacked data to meaninful states and measurements with units
                 sample = {"inbytes":inbytes, "pctimestamp":time.time()}
                 sample["timecode"], sample["state"], sample["measureUpper"], sample["measureLower"] = decoder.DecodeUnpackedData(unpackedData)
-                QtGui.QApplication.instance().beep()
+                #QtGui.QApplication.instance().beep()
                 #record and display
                 decoder.PrintSample(sample, decoder, unpackedData)
                 history.AddSampleToHistory(sample)
-
             else:
                 time.sleep(0.05)
         
